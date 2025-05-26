@@ -6,7 +6,9 @@ const {
     ButtonStyle,
     PermissionFlagsBits
 } = require('discord.js');
+const GuildConfig = require('../../models/GuildConfig');
 const { checkPermissions } = require('../../utils/permissions');
+const translations = require('../../utils/translations');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -18,8 +20,7 @@ module.exports = {
                 .setDescription('Channel to send the ticket panel (optional)')
                 .setRequired(false)
         )        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
-    
-    async execute(interaction) {
+      async execute(interaction) {
         // Defer reply immediately with robust error handling
         if (!interaction.deferred && !interaction.replied) {
             try {
@@ -28,10 +29,16 @@ module.exports = {
                 console.error('Error deferring interaction:', error);
                 return;
             }
-        }        if (!checkPermissions.isStaff(interaction.member)) {
+        }
+
+        // Get guild configuration for language
+        const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
+        const lang = guildConfig?.language || 'en';
+
+        if (!checkPermissions.isStaff(interaction.member)) {
             try {
                 return await interaction.editReply({
-                    content: '❌ You do not have permission to create ticket panels.'
+                    content: translations.get('ticketpanel_permission_denied', lang)
                 });
             } catch (error) {
                 console.error('Error sending permission denied message:', error);
@@ -44,7 +51,7 @@ module.exports = {
             if (!channel.permissionsFor(interaction.guild.members.me).has(['SendMessages', 'EmbedLinks'])) {
                 try {
                     return await interaction.editReply({
-                        content: '❌ I do not have permission to send messages in that channel.'
+                        content: translations.get('config_channel_permissions', lang)
                     });
                 } catch (error) {
                     console.error('Error sending permissions error message:', error);
@@ -54,26 +61,11 @@ module.exports = {
 
             // Create the ticket panel embed
             const ticketEmbed = new EmbedBuilder()
-                .setTitle('🎫 Support Ticket System')
-                .setDescription(`
-**Need help or have a question?**
-
-Click the button below to create a support ticket. Our staff team will assist you as soon as possible.
-
-**Before creating a ticket:**
-• Check if your question has been answered in our FAQ
-• Make sure your issue hasn't been resolved already
-• Provide clear and detailed information about your problem
-
-**Ticket Categories:**
-🔧 Technical Support
-💬 General Questions  
-🛠️ Bug Reports
-💡 Feature Requests
-`)
+                .setTitle(translations.get('ticketpanel_title', lang))
+                .setDescription(translations.get('ticketpanel_description', lang))
                 .setColor('#00aaff')
                 .setFooter({ 
-                    text: '• One ticket per issue • Be patient and respectful', 
+                    text: translations.get('ticketpanel_footer', lang), 
                     iconURL: interaction.guild.iconURL() 
                 })
                 .setThumbnail(interaction.guild.iconURL())
@@ -84,18 +76,16 @@ Click the button below to create a support ticket. Our staff team will assist yo
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId('ticket-create')
-                        .setLabel('Create Ticket')
+                        .setLabel(translations.get('ticketpanel_button', lang))
                         .setStyle(ButtonStyle.Primary)
                         .setEmoji('🎫')
-                );            // Send the panel
+                );// Send the panel
             const panelMessage = await channel.send({
                 embeds: [ticketEmbed],
                 components: [actionRow]
-            });
-
-            try {
+            });            try {
                 await interaction.editReply({
-                    content: `✅ Ticket panel created successfully in ${channel}!`
+                    content: translations.get('ticketpanel_created', lang, { channel: channel.toString() })
                 });
             } catch (error) {
                 console.error('Error sending success message:', error);
@@ -105,7 +95,7 @@ Click the button below to create a support ticket. Our staff team will assist yo
             console.error('Error creating ticket panel:', error);
             try {
                 await interaction.editReply({
-                    content: '❌ Failed to create ticket panel. Please check my permissions and try again.'
+                    content: translations.get('ticketpanel_error', lang)
                 });
             } catch (editError) {
                 console.error('Error sending error message:', editError);

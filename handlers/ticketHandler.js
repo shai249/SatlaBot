@@ -12,27 +12,49 @@ const {
 const Ticket = require('../models/Ticket');
 const GuildConfig = require('../models/GuildConfig');
 const { checkPermissions } = require('../utils/permissions');
+const translations = require('../utils/translations');
 
 class TicketHandler {
     constructor() {
         this.creatingTickets = new Set();
-    }
-
-    async handleTicketButton(interaction, params) {
-        const [action, ...args] = params;
+    }    async handleTicketButton(interaction, params) {
+        // For ticket buttons, the format is: ticket-ACTION_TICKETID
+        // After split('-'), params[0] will be 'ACTION_TICKETID'
+        const fullAction = params[0]; // e.g., 'claim_TICKET-0001' or 'close_TICKET-0001'
         
-        switch (action) {
+        let action = null;
+        let ticketId = null;
+          if (fullAction === 'create') {
+            action = 'create';
+        } else if (fullAction === 'cancel_close') {
+            action = 'cancel_close';        } else if (fullAction && fullAction.includes('_')) {
+            // Split on underscore to separate action from ticket ID
+            const underscoreIndex = fullAction.indexOf('_');
+            action = fullAction.substring(0, underscoreIndex);
+            
+            // Reconstruct the full ticket ID from the remaining parts
+            // params[0] = 'claim_TICKET', params[1] = '0011', etc.
+            const ticketIdPart = fullAction.substring(underscoreIndex + 1); // 'TICKET'
+            const remainingParts = params.slice(1); // ['0011'] or ['0011', 'EXTRA'] etc.
+            ticketId = ticketIdPart + (remainingParts.length > 0 ? '-' + remainingParts.join('-') : '');
+        } else {
+            // Fallback to old format for backwards compatibility
+            action = params[0];
+            ticketId = params[1];
+            console.log('Using fallback format:', { action, ticketId });
+        }
+          switch (action) {
             case 'create':
                 await this.showTicketModal(interaction);
                 break;
             case 'claim':
-                await this.claimTicket(interaction, args[0]);
+                await this.claimTicket(interaction, ticketId);
                 break;
             case 'close':
-                await this.closeTicket(interaction, args[0]);
+                await this.closeTicket(interaction, ticketId);
                 break;
-            case 'confirm_close':
-                await this.confirmCloseTicket(interaction, args[0]);
+            case 'confirmclose':
+                await this.confirmCloseTicket(interaction, ticketId);
                 break;
             case 'cancel_close':
                 await this.cancelCloseTicket(interaction);
@@ -43,9 +65,7 @@ class TicketHandler {
                     flags: 64
                 });
         }
-    }
-
-    async showTicketModal(interaction) {
+    }    async showTicketModal(interaction) {
         // Check if user already has maximum tickets
         const existingTickets = await Ticket.find({
             userId: interaction.user.id,
@@ -55,30 +75,29 @@ class TicketHandler {
 
         const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
         const maxTickets = guildConfig?.ticketConfig?.maxTicketsPerUser || 3;
+        const lang = guildConfig?.language || 'en';
 
         if (existingTickets.length >= maxTickets) {
             return await interaction.reply({
-                content: `❌ You already have ${existingTickets.length} open tickets. Please close some before creating new ones.`,
+                content: translations.get('ticket_max_reached', lang, { count: existingTickets.length }),
                 flags: 64
             });
-        }
-
-        const modal = new ModalBuilder()
+        }        const modal = new ModalBuilder()
             .setCustomId('ticket-create')
-            .setTitle('Create Support Ticket');
+            .setTitle(translations.get('ticket_modal_title', lang));
 
         const subjectInput = new TextInputBuilder()
             .setCustomId('subject')
-            .setLabel('Subject')
+            .setLabel(translations.get('ticket_modal_subject', lang))
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Brief description of your issue')
+            .setPlaceholder(translations.get('ticket_modal_subject_placeholder', lang))
             .setRequired(true)
             .setMaxLength(100);
 
         const descriptionInput = new TextInputBuilder()
             .setCustomId('description')
-            .setLabel('Description')            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Detailed description of your issue or question')
+            .setLabel(translations.get('ticket_modal_description', lang))            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder(translations.get('ticket_modal_description_placeholder', lang))
             .setRequired(false)
             .setMaxLength(1000);
 
@@ -112,11 +131,10 @@ class TicketHandler {
 
         try {
             await interaction.deferReply({ flags: 64 });            const subject = interaction.fields.getTextInputValue('subject');
-            const description = interaction.fields.getTextInputValue('description') || 'No description provided';
-
-            // Get guild configuration
+            const description = interaction.fields.getTextInputValue('description') || 'No description provided';            // Get guild configuration
             const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
             const categoryId = guildConfig?.ticketConfig?.categoryId;
+            const lang = guildConfig?.language || 'en';
 
             // Generate unique ticket ID
             const ticketId = await Ticket.generateTicketId();
@@ -173,19 +191,17 @@ class TicketHandler {
                     { name: '🕐 Created', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true }
                 )
                 .setColor('#00aaff')
+                .setThumbnail(interaction.user.displayAvatarURL())
                 .setFooter({ text: `Ticket ID: ${ticketId}` })
-                .setTimestamp();
-
-            // Create action buttons
+                .setTimestamp();// Create action buttons
             const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`ticket-claim-${ticketId}`)
-                        .setLabel('🔧 Claim Ticket')
+                .addComponents(                    new ButtonBuilder()
+                        .setCustomId(`ticket-claim_${ticketId}`)
+                        .setLabel(translations.get('ticket_button_claim', lang))
                         .setStyle(ButtonStyle.Primary),
                     new ButtonBuilder()
-                        .setCustomId(`ticket-close-${ticketId}`)
-                        .setLabel('🔒 Close Ticket')
+                        .setCustomId(`ticket-close_${ticketId}`)
+                        .setLabel(translations.get('ticket_button_close', lang))
                         .setStyle(ButtonStyle.Danger)
                 );
 
@@ -197,10 +213,8 @@ class TicketHandler {
             });
 
             // Log ticket creation
-            await this.logTicketAction(interaction.guild, 'created', ticket, interaction.user);
-
-            await interaction.editReply({
-                content: `✅ Ticket created successfully! Please check <#${channel.id}> for your support ticket.`
+            await this.logTicketAction(interaction.guild, 'created', ticket, interaction.user);            await interaction.editReply({
+                content: translations.get('ticket_created', lang, { channel: `<#${channel.id}>` })
             });
 
         } catch (error) {
@@ -211,37 +225,41 @@ class TicketHandler {
         } finally {
             this.creatingTickets.delete(userKey);
         }
-    }
-
-    async claimTicket(interaction, ticketId) {
+    }    async claimTicket(interaction, ticketId) {
         try {
             // Check if user has permission to claim tickets
             if (!checkPermissions.isStaff(interaction.member)) {
                 return await interaction.reply({
-                    content: '❌ You do not have permission to claim tickets.',
+                    content: translations.get('error_permissions', 'en'),
                     flags: 64
                 });
             }
 
-            const ticket = await Ticket.findOne({ ticketId, guildId: interaction.guild.id });
+            const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
+            const lang = guildConfig?.language || 'en';
+
+            const ticket = await Ticket.findOne({ 
+                ticketId: { $regex: new RegExp(`^${ticketId}$`, 'i') }, 
+                guildId: interaction.guild.id 
+            });
             
             if (!ticket) {
                 return await interaction.reply({
-                    content: '❌ Ticket not found.',
+                    content: translations.get('ticket_not_found', lang),
                     flags: 64
                 });
             }
 
             if (ticket.status === 'claimed') {
                 return await interaction.reply({
-                    content: `❌ This ticket is already claimed by <@${ticket.claimedBy}>.`,
+                    content: translations.get('ticket_already_claimed', lang, { user: `<@${ticket.claimedBy}>` }),
                     flags: 64
                 });
             }
 
             if (ticket.status === 'closed') {
                 return await interaction.reply({
-                    content: '❌ This ticket is already closed.',
+                    content: translations.get('ticket_already_closed', lang),
                     flags: 64
                 });
             }
@@ -251,35 +269,59 @@ class TicketHandler {
             ticket.claimedBy = interaction.user.id;
             ticket.claimedAt = new Date();
             await ticket.save();
-            await ticket.addLog('claimed', interaction.user.id, interaction.user.username);
-
-            // Update embed
-            const embed = EmbedBuilder.from(interaction.message.embeds[0])
-                .addFields({ name: '🔧 Claimed by', value: `<@${interaction.user.id}>`, inline: true })
-                .setColor('#ffaa00');
-
-            // Update buttons
+            await ticket.addLog('claimed', interaction.user.id, interaction.user.username);            // Update embed with enhanced styling - preserve original ticket creator's avatar
+            const originalEmbed = interaction.message.embeds[0];
+            const embed = EmbedBuilder.from(originalEmbed)
+                .addFields(
+                    { name: '🔧 Claimed by', value: `<@${interaction.user.id}>`, inline: true },
+                    { name: '⏰ Claimed at', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                    { name: '📊 Status', value: '🟡 **CLAIMED**', inline: true }
+                )
+                .setColor('#ffaa00')
+                .setFooter({ 
+                    text: `Claimed by ${interaction.user.username} • Ticket ID: ${ticket.ticketId}`, 
+                    iconURL: interaction.user.displayAvatarURL() 
+                });
+            
+            // Preserve the original ticket creator's avatar thumbnail
+            if (originalEmbed.thumbnail) {
+                embed.setThumbnail(originalEmbed.thumbnail.url);
+            }            // Update buttons
             const actionRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`ticket-claim-${ticketId}`)
-                        .setLabel('✅ Claimed')
+                        .setCustomId(`ticket-claim_${ticketId}`)
+                        .setLabel(translations.get('ticket_button_claimed', lang))
                         .setStyle(ButtonStyle.Success)
                         .setDisabled(true),
                     new ButtonBuilder()
-                        .setCustomId(`ticket-close-${ticketId}`)
-                        .setLabel('🔒 Close Ticket')
+                        .setCustomId(`ticket-close_${ticketId}`)
+                        .setLabel(translations.get('ticket_button_close', lang))
                         .setStyle(ButtonStyle.Danger)
                 );
 
             await interaction.update({
                 embeds: [embed],
                 components: [actionRow]
-            });
+            });            // Enhanced claim notification with embed
+            const claimEmbed = new EmbedBuilder()
+                .setTitle(translations.get('ticket_claim_title', lang))
+                .setDescription(translations.get('ticket_claim_description', lang, { user: interaction.user.username }))
+                .addFields(
+                    { name: translations.get('ticket_field_staff', lang), value: `<@${interaction.user.id}>`, inline: true },
+                    { name: translations.get('ticket_field_ticket_id', lang), value: ticket.ticketId, inline: true },
+                    { name: translations.get('ticket_field_response_time', lang), value: `<t:${Math.floor((Date.now() - ticket.createdAt.getTime()) / 1000)}:R>`, inline: true }
+                )
+                .setColor('#00ff00')
+                .setThumbnail(interaction.user.displayAvatarURL())
+                .setTimestamp()
+                .setFooter({ 
+                    text: translations.get('ticket_claim_footer', lang), 
+                    iconURL: interaction.guild.iconURL() 
+                });
 
-            // Send claim notification
             await interaction.followUp({
-                content: `🔧 **${interaction.user.username}** has claimed this ticket and will assist you shortly.`,
+                embeds: [claimEmbed],
                 ephemeral: false
             });
 
@@ -293,22 +335,23 @@ class TicketHandler {
                 flags: 64
             });
         }
-    }
-
-    async closeTicket(interaction, ticketId) {
+    }    async closeTicket(interaction, ticketId) {
         try {
+            const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
+            const lang = guildConfig?.language || 'en';
+            
             const ticket = await Ticket.findOne({ ticketId, guildId: interaction.guild.id });
             
             if (!ticket) {
                 return await interaction.reply({
-                    content: '❌ Ticket not found.',
+                    content: translations.get('ticket_not_found', lang),
                     flags: 64
                 });
             }
 
             if (ticket.status === 'closed') {
                 return await interaction.reply({
-                    content: '❌ This ticket is already closed.',
+                    content: translations.get('ticket_already_closed', lang),
                     flags: 64
                 });
             }
@@ -318,7 +361,7 @@ class TicketHandler {
             
             if (!canClose) {
                 return await interaction.reply({
-                    content: '❌ You do not have permission to close this ticket.',
+                    content: translations.get('error_permissions', lang),
                     flags: 64
                 });
             }
@@ -326,18 +369,16 @@ class TicketHandler {
             // Show confirmation dialog
             const confirmEmbed = new EmbedBuilder()
                 .setTitle('🔒 Close Ticket')
-                .setDescription(`Are you sure you want to close ticket **${ticketId}**?\n\nThis action cannot be undone and the channel will be deleted.`)
-                .setColor('#ff0000');
-
-            const confirmRow = new ActionRowBuilder()
+                .setDescription(translations.get('ticket_close_confirm', lang, { ticketId }))
+                .setColor('#ff0000');            const confirmRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`ticket-confirm_close-${ticketId}`)
-                        .setLabel('✅ Yes, Close Ticket')
+                        .setCustomId(`ticket-confirmclose_${ticketId}`)
+                        .setLabel(translations.get('ticket_button_confirm_close', lang))
                         .setStyle(ButtonStyle.Danger),
                     new ButtonBuilder()
                         .setCustomId('ticket-cancel_close')
-                        .setLabel('❌ Cancel')
+                        .setLabel(translations.get('ticket_button_cancel', lang))
                         .setStyle(ButtonStyle.Secondary)
                 );
 
@@ -354,15 +395,16 @@ class TicketHandler {
                 flags: 64
             });
         }
-    }
-
-    async confirmCloseTicket(interaction, ticketId) {
+    }    async confirmCloseTicket(interaction, ticketId) {
         try {
+            const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
+            const lang = guildConfig?.language || 'en';
+            
             const ticket = await Ticket.findOne({ ticketId, guildId: interaction.guild.id });
             
             if (!ticket) {
                 return await interaction.update({
-                    content: '❌ Ticket not found.',
+                    content: translations.get('ticket_not_found', lang),
                     embeds: [],
                     components: []
                 });
@@ -378,7 +420,7 @@ class TicketHandler {
             await this.logTicketAction(interaction.guild, 'closed', ticket, interaction.user);
 
             await interaction.update({
-                content: '✅ Ticket will be closed in 5 seconds...',
+                content: translations.get('ticket_closing', lang),
                 embeds: [],
                 components: []
             });
@@ -403,11 +445,12 @@ class TicketHandler {
                 components: []
             });
         }
-    }
-
-    async cancelCloseTicket(interaction) {
+    }    async cancelCloseTicket(interaction) {
+        const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
+        const lang = guildConfig?.language || 'en';
+        
         await interaction.update({
-            content: '❌ Ticket close cancelled.',
+            content: translations.get('ticket_close_cancelled', lang),
             embeds: [],
             components: []
         });

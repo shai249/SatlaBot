@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('disc
 const Ticket = require('../../models/Ticket');
 const GuildConfig = require('../../models/GuildConfig');
 const { checkPermissions } = require('../../utils/permissions');
+const translations = require('../../utils/translations');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -63,10 +64,12 @@ module.exports = {
                 .setName('stats')
                 .setDescription('View ticket statistics')
         )
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-
-    async execute(interaction) {
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),    async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
+
+        // Get guild configuration for language
+        const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
+        const lang = guildConfig?.language || 'en';
 
         // Check if user has permission for staff commands
         const isStaff = checkPermissions.isStaff(interaction.member);
@@ -74,36 +77,32 @@ module.exports = {
 
         if (!isStaff && !isOwner && subcommand !== 'list') {
             return await interaction.reply({
-                content: '❌ You do not have permission to manage tickets.',
+                content: translations.get('tickets_no_permission', lang),
                 flags: 64
             });
-        }
-
-        try {
+        }        try {
             switch (subcommand) {
                 case 'list':
-                    await this.listTickets(interaction, isStaff);
+                    await this.listTickets(interaction, isStaff, lang);
                     break;
                 case 'view':
-                    await this.viewTicket(interaction);
+                    await this.viewTicket(interaction, lang);
                     break;
                 case 'close':
-                    await this.forceCloseTicket(interaction);
+                    await this.forceCloseTicket(interaction, lang);
                     break;
                 case 'stats':
-                    await this.showStats(interaction);
+                    await this.showStats(interaction, lang);
                     break;
             }
         } catch (error) {
             console.error(`Error in tickets ${subcommand}:`, error);
             await interaction.reply({
-                content: '❌ An error occurred while processing your request.',
+                content: translations.get('error_generic', lang),
                 flags: 64
             });
         }
-    },
-
-    async listTickets(interaction, isStaff) {
+    },    async listTickets(interaction, isStaff, lang) {
         const status = interaction.options.getString('status') || 'all';
         const user = interaction.options.getUser('user');
 
@@ -126,15 +125,15 @@ module.exports = {
 
         if (tickets.length === 0) {
             return await interaction.reply({
-                content: '📭 No tickets found matching your criteria.',
+                content: translations.get('tickets_list_empty', lang),
                 flags: 64
             });
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('🎫 Ticket List')
+            .setTitle(translations.get('tickets_list_title', lang))
             .setColor('#00aaff')
-            .setFooter({ text: `Showing ${tickets.length} tickets` })
+            .setFooter({ text: translations.get('tickets_list_footer', lang, { count: tickets.length }) })
             .setTimestamp();
 
         let description = '';
@@ -156,29 +155,29 @@ module.exports = {
         embed.setDescription(description.slice(0, 4000)); // Discord embed limit
 
         await interaction.reply({ embeds: [embed], flags: 64 });
-    },
-
-    async viewTicket(interaction) {
+    },    async viewTicket(interaction, lang) {
         const ticketId = interaction.options.getString('ticket_id');
         
         const ticket = await Ticket.findOne({
-            ticketId: ticketId.toUpperCase(),
+            ticketId: ticketId,
             guildId: interaction.guild.id
         });
 
         if (!ticket) {
             return await interaction.reply({
-                content: '❌ Ticket not found.',
+                content: translations.get('ticket_not_found', lang),
                 flags: 64
             });
-        }        const embed = new EmbedBuilder()
-            .setTitle(`🎫 ${ticket.ticketId}`)
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(translations.get('tickets_view_title', lang, { ticketId: ticket.ticketId }))
             .setDescription(ticket.description || 'No description provided')
             .addFields(
-                { name: '👤 User', value: `<@${ticket.userId}>`, inline: true },
-                { name: '📝 Subject', value: ticket.subject, inline: true },
-                { name: '🔹 Status', value: ticket.status.toUpperCase(), inline: true },
-                { name: '📅 Created', value: `<t:${Math.floor(ticket.createdAt.getTime() / 1000)}:F>`, inline: true }
+                { name: translations.get('tickets_view_user', lang), value: `<@${ticket.userId}>`, inline: true },
+                { name: translations.get('tickets_view_subject', lang), value: ticket.subject, inline: true },
+                { name: translations.get('tickets_view_status', lang), value: ticket.status.toUpperCase(), inline: true },
+                { name: translations.get('tickets_view_created', lang), value: `<t:${Math.floor(ticket.createdAt.getTime() / 1000)}:F>`, inline: true }
             )
             .setColor(this.getStatusColor(ticket.status))
             .setFooter({ text: `Ticket ID: ${ticket.ticketId}` })
@@ -186,7 +185,7 @@ module.exports = {
 
         if (ticket.claimedBy) {
             embed.addFields({ 
-                name: '🔧 Claimed by', 
+                name: translations.get('tickets_view_claimed_by', lang), 
                 value: `<@${ticket.claimedBy}>`, 
                 inline: true 
             });
@@ -194,11 +193,10 @@ module.exports = {
 
         if (ticket.closedAt) {
             embed.addFields({ 
-                name: '🔒 Closed', 
+                name: translations.get('tickets_view_closed', lang), 
                 value: `<t:${Math.floor(ticket.closedAt.getTime() / 1000)}:F>`, 
                 inline: true 
-            });
-        }
+            });        }
 
         // Show recent logs
         if (ticket.logs.length > 0) {
@@ -207,31 +205,29 @@ module.exports = {
             for (const log of recentLogs) {
                 logText += `• ${log.action} by ${log.username} <t:${Math.floor(log.timestamp.getTime() / 1000)}:R>\n`;
             }
-            embed.addFields({ name: '📋 Recent Activity', value: logText, inline: false });
+            embed.addFields({ name: translations.get('tickets_view_recent_activity', lang), value: logText, inline: false });
         }
 
         await interaction.reply({ embeds: [embed], flags: 64 });
-    },
-
-    async forceCloseTicket(interaction) {
+    },    async forceCloseTicket(interaction, lang) {
         const ticketId = interaction.options.getString('ticket_id');
         const reason = interaction.options.getString('reason') || 'Force closed by staff';
 
         const ticket = await Ticket.findOne({
-            ticketId: ticketId.toUpperCase(),
+            ticketId: ticketId,
             guildId: interaction.guild.id
         });
 
         if (!ticket) {
             return await interaction.reply({
-                content: '❌ Ticket not found.',
+                content: translations.get('ticket_not_found', lang),
                 flags: 64
             });
         }
 
         if (ticket.status === 'closed') {
             return await interaction.reply({
-                content: '❌ This ticket is already closed.',
+                content: translations.get('ticket_already_closed', lang),
                 flags: 64
             });
         }
@@ -253,12 +249,13 @@ module.exports = {
         }
 
         await interaction.reply({
-            content: `✅ Ticket **${ticket.ticketId}** has been force closed.\n**Reason:** ${reason}`,
+            content: translations.get('tickets_force_closed', lang, { 
+                ticketId: ticket.ticketId, 
+                reason: reason 
+            }),
             flags: 64
         });
-    },
-
-    async showStats(interaction) {
+    },    async showStats(interaction, lang) {
         const totalTickets = await Ticket.countDocuments({ guildId: interaction.guild.id });
         const openTickets = await Ticket.countDocuments({ 
             guildId: interaction.guild.id, 
@@ -297,17 +294,17 @@ module.exports = {
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('📊 Ticket Statistics')
+            .setTitle(translations.get('tickets_stats_title', lang))
             .addFields(
-                { name: '🎫 Total Tickets', value: totalTickets.toString(), inline: true },
-                { name: '🟢 Open', value: openTickets.toString(), inline: true },
-                { name: '🟡 Claimed', value: claimedTickets.toString(), inline: true },
-                { name: '🔴 Closed', value: closedTickets.toString(), inline: true },
-                { name: '📅 Today', value: todayTickets.toString(), inline: true },
-                { name: '⏱️ Avg Response Time', value: this.formatDuration(avgResponseTime), inline: true }
+                { name: translations.get('tickets_total', lang), value: totalTickets.toString(), inline: true },
+                { name: translations.get('tickets_open', lang), value: openTickets.toString(), inline: true },
+                { name: translations.get('tickets_claimed', lang), value: claimedTickets.toString(), inline: true },
+                { name: translations.get('tickets_closed', lang), value: closedTickets.toString(), inline: true },
+                { name: translations.get('tickets_today', lang), value: todayTickets.toString(), inline: true },
+                { name: translations.get('tickets_avg_response', lang), value: this.formatDuration(avgResponseTime), inline: true }
             )
             .setColor('#00aaff')
-            .setFooter({ text: `Statistics for ${interaction.guild.name}` })
+            .setFooter({ text: translations.get('tickets_stats_footer', lang, { server: interaction.guild.name }) })
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed], flags: 64 });

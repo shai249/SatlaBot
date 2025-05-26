@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const GuildConfig = require('../../models/GuildConfig');
 const { checkPermissions } = require('../../utils/permissions');
+const translations = require('../../utils/translations');
 const interactionHandler = require('../../handlers/interactionHandler');
 
 module.exports = {
@@ -80,130 +81,139 @@ module.exports = {
                 console.error('Failed to send error response:', replyError);
                 return;
             }
-        }
-
-        // Now proceed with permission checks and other logic
+        }        // Now proceed with permission checks and other logic
+        const guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id }) || new GuildConfig({ guildId: interaction.guild.id });
+        const lang = guildConfig.language || 'en';
+        
         if (!checkPermissions.canConfigureBot(interaction.member)) {
             return await interaction.editReply({
-                content: '❌ You do not have permission to configure ticket settings.'
+                content: translations.get('ticketconfig_permission_denied', lang)
             });
         }
 
-        const subcommand = interaction.options.getSubcommand();
-
-        try {
-            let guildConfig = await GuildConfig.findOne({ guildId: interaction.guild.id });
-            if (!guildConfig) {
-                guildConfig = new GuildConfig({ guildId: interaction.guild.id });
+        const subcommand = interaction.options.getSubcommand();        try {
+            let guildConfigForSave = await GuildConfig.findOne({ guildId: interaction.guild.id });
+            if (!guildConfigForSave) {
+                guildConfigForSave = new GuildConfig({ guildId: interaction.guild.id });
             }
 
-            switch (subcommand) {
-                case 'category':
+            switch (subcommand) {                case 'category':
                     const category = interaction.options.getChannel('category');
                     
                     if (category.type !== 4) { // CategoryChannel type
                         return await interaction.editReply({
-                            content: '❌ Please select a category channel.'
+                            content: translations.get('ticketconfig_category_invalid', lang)
                         });
                     }
 
-                    guildConfig.ticketConfig.categoryId = category.id;
-                    await guildConfig.save();
+                    guildConfigForSave.ticketConfig.categoryId = category.id;
+                    await guildConfigForSave.save();
 
                     await interaction.editReply({
-                        content: `✅ Ticket category has been set to **${category.name}**.`
+                        content: translations.get('ticketconfig_category_set', lang, { category: category.name })
                     });
                     break;
 
                 case 'staffrole':
                     const role = interaction.options.getRole('role');
                     
-                    guildConfig.ticketConfig.staffRoleId = role.id;
-                    await guildConfig.save();
+                    guildConfigForSave.ticketConfig.staffRoleId = role.id;
+                    await guildConfigForSave.save();
 
                     await interaction.editReply({
-                        content: `✅ Staff role has been set to **${role.name}**.`
+                        content: translations.get('ticketconfig_staffrole_set', lang, { role: role.name })
                     });
-                    break;
-
-                case 'logs':
+                    break;                case 'logs':
                     const logChannel = interaction.options.getChannel('channel');
                       if (!logChannel.isTextBased()) {
                         return await interaction.editReply({
-                            content: '❌ Please select a text channel.'
+                            content: translations.get('ticketconfig_logs_invalid', lang)
                         });
                     }
 
                     // Check bot permissions
                     if (!logChannel.permissionsFor(interaction.guild.members.me).has(['SendMessages', 'EmbedLinks'])) {
                         return await interaction.editReply({
-                            content: '❌ I do not have permission to send messages in that channel.'
+                            content: translations.get('config_channel_permissions', lang)
                         });
                     }
 
-                    guildConfig.ticketConfig.logChannelId = logChannel.id;
-                    await guildConfig.save();
+                    guildConfigForSave.ticketConfig.logChannelId = logChannel.id;
+                    await guildConfigForSave.save();
 
                     await interaction.editReply({
-                        content: `✅ Ticket log channel has been set to ${logChannel}.`
+                        content: translations.get('ticketconfig_logs_set', lang, { channel: logChannel.toString() })
                     });
                     break;
 
                 case 'maxtickets':
                     const maxTickets = interaction.options.getInteger('amount');
                     
-                    guildConfig.ticketConfig.maxTicketsPerUser = maxTickets;
-                    await guildConfig.save();                    await interaction.editReply({
-                        content: `✅ Maximum tickets per user has been set to **${maxTickets}**.`
+                    guildConfigForSave.ticketConfig.maxTicketsPerUser = maxTickets;
+                    await guildConfigForSave.save();                    await interaction.editReply({
+                        content: translations.get('ticketconfig_maxtickets_set', lang, { amount: maxTickets })
                     });
-                    break;
-
-                case 'status':
-                    const config = guildConfig.ticketConfig;
+                    break;                case 'status':
+                    const config = guildConfigForSave.ticketConfig;
                     
-                    let statusMessage = '**🎫 Ticket System Configuration**\n\n';
+                    let statusMessage = translations.get('ticketconfig_status_title', lang) + '\n\n';
                     
                     // Category
                     if (config.categoryId) {
                         const cat = interaction.guild.channels.cache.get(config.categoryId);
-                        statusMessage += `📁 **Category:** ${cat ? cat.name : 'Not found'}\n`;
+                        statusMessage += translations.get('ticketconfig_status_category', lang, { 
+                            category: cat ? cat.name : translations.get('ticketconfig_not_found', lang) 
+                        }) + '\n';
                     } else {
-                        statusMessage += `📁 **Category:** Not configured\n`;
+                        statusMessage += translations.get('ticketconfig_status_category', lang, { 
+                            category: translations.get('ticketconfig_not_configured', lang) 
+                        }) + '\n';
                     }
                     
                     // Staff Role
                     if (config.staffRoleId) {
                         const staffRole = interaction.guild.roles.cache.get(config.staffRoleId);
-                        statusMessage += `👥 **Staff Role:** ${staffRole ? staffRole.name : 'Not found'}\n`;
+                        statusMessage += translations.get('ticketconfig_status_staffrole', lang, { 
+                            role: staffRole ? staffRole.name : translations.get('ticketconfig_not_found', lang) 
+                        }) + '\n';
                     } else {
-                        statusMessage += `👥 **Staff Role:** Not configured\n`;
+                        statusMessage += translations.get('ticketconfig_status_staffrole', lang, { 
+                            role: translations.get('ticketconfig_not_configured', lang) 
+                        }) + '\n';
                     }
                     
                     // Log Channel
                     if (config.logChannelId) {
                         const logCh = interaction.guild.channels.cache.get(config.logChannelId);
-                        statusMessage += `📋 **Log Channel:** ${logCh ? `<#${logCh.id}>` : 'Not found'}\n`;
+                        statusMessage += translations.get('ticketconfig_status_logs', lang, { 
+                            channel: logCh ? `<#${logCh.id}>` : translations.get('ticketconfig_not_found', lang) 
+                        }) + '\n';
                     } else {
-                        statusMessage += `📋 **Log Channel:** Not configured\n`;
+                        statusMessage += translations.get('ticketconfig_status_logs', lang, { 
+                            channel: translations.get('ticketconfig_not_configured', lang) 
+                        }) + '\n';
                     }
                     
-                    statusMessage += `🔢 **Max Tickets per User:** ${config.maxTicketsPerUser}\n`;
-                    statusMessage += `⚙️ **System Status:** ${config.enabled ? 'Enabled' : 'Disabled'}`;                    await interaction.editReply({
+                    statusMessage += translations.get('ticketconfig_status_maxtickets', lang, { 
+                        amount: config.maxTicketsPerUser 
+                    }) + '\n';
+                    statusMessage += translations.get('ticketconfig_status_enabled', lang, { 
+                        status: config.enabled ? translations.get('ticketconfig_enabled', lang) : translations.get('ticketconfig_disabled', lang) 
+                    });                    await interaction.editReply({
                         content: statusMessage
                     });
                     break;
             }        } catch (error) {
             console.error('Error in ticketconfig command:', error);
-            
-            // Try to respond with error message
+              // Try to respond with error message
             try {
                 if (interaction.deferred) {
                     await interaction.editReply({
-                        content: '❌ An error occurred while configuring ticket settings.'
+                        content: translations.get('ticketconfig_error', 'en')
                     });
                 } else if (!interaction.replied) {
                     await interaction.reply({
-                        content: '❌ An error occurred while configuring ticket settings.',
+                        content: translations.get('ticketconfig_error', 'en'),
                         flags: 64
                     });
                 }
